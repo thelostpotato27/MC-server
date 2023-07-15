@@ -7,10 +7,8 @@ SERVICE = 'minecraft-server'
 
 
 def lambda_handler(event, context):
-    #shutting down the server when it detects no CPU usage from the fargate instances, currently quiet inefficient due to the 
-    #function being called by cloudwatch every time a player leaves the server
-    #https://alexwlchan.net/2020/finding-the-bottlenecks-in-an-ecs-cluster/
-    #https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch/client/get_metric_statistics.html#
+    #changed the server to auto update whenever a player joins/leaves. The function sums all connections to the service
+    #and then adjusts the amount of servers to be 1/2 of the player num.
 
     ecs = boto3.client('ecs', region_name=REGION)
     response = ecs.describe_services(
@@ -18,23 +16,17 @@ def lambda_handler(event, context):
         services=[SERVICE],
     )
 
-    cloudwatch = boto3.client("cloudwatch")
+    running_tasks = ecs['clusters'][0]['running_tasks']
 
-    data = cloudwatch.get_metric_statistics(
-        Namespace="AWS/ECS",
-        MetricName="CPUUtilization",
-        Dimensions=[
-            {"Name": CLUSTER, "Value": "curr_use"},
-        ],
-        StartTime=datetime.datetime.now(),
-        EndTime=datetime.datetime.now(),
-        Period=60,
-        Statistics=["curr_use_val"]
-    )
+    # Get the number of connections for each task.
+    connections = []
+    for task in running_tasks:
+        connections.append(task['connections'])
 
-    if data['Datapoints']["curr_use_val"] == 0:
-        ecs.update_service(
-            cluster=CLUSTER,
-            service=SERVICE,
-            desiredCount=0,
-        )
+    num_connections = sum(connections)
+
+
+    ecs.update_service(
+        cluster=CLUSTER,
+        service=SERVICE,
+        desiredCount=int(num_connections/2))
